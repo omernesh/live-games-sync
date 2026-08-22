@@ -1,0 +1,764 @@
+#!/usr/bin/env python3
+"""
+Live Games Calendar Sync — fetch sports broadcasts from Telesport API,
+filter for male adult soccer & basketball, and add missing events to
+Google Calendar "Live Games".
+
+Idempotent: checks existing calendar events before creating new ones.
+Safe: never duplicates, never overwrites.
+
+Usage:
+  python3 live-games-sync.py          # sync next 7 days
+  python3 live-games-sync.py --days 3 # sync next 3 days
+  python3 live-games-sync.py --dry-run  # preview only, no creates
+"""
+
+import json, os, subprocess, sys, time
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# ── Configuration ────────────────────────────────────────────────────
+# Resolution order: environment variable → config file → placeholder.
+#
+# Config file: ~/.config/live-games-sync/config.json
+#   {
+#     "calendar_id": "abc123@group.calendar.google.com",
+#     "state_path": "/path/to/state.json"
+#   }
+# Env vars: LIVE_GAMES_CALENDAR_ID, LIVE_GAMES_STATE_PATH
+
+CONFIG_PATH = os.path.expanduser("~/.config/live-games-sync/config.json")
+
+def _load_config() -> dict:
+    cfg = {}
+    try:
+        with open(CONFIG_PATH) as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return cfg
+
+_CONFIG = _load_config()
+
+# Target Google Calendar ID (see README: "Create a calendar")
+LIVE_GAMES_CALENDAR_ID = (
+    os.environ.get("LIVE_GAMES_CALENDAR_ID")
+    or _CONFIG.get("calendar_id")
+    or "YOUR_CALENDAR_ID@group.calendar.google.com"
+)
+
+# Local state file path — prevents duplicate creation across runs
+LOCAL_STATE_PATH = os.path.expanduser(
+    os.environ.get("LIVE_GAMES_STATE_PATH")
+    or _CONFIG.get("state_path")
+    or "~/.local/share/live-games-sync/state.json"
+)
+
+TELESPORT_API = "https://m.telesport.co.il/api/broadcasts?date={date}"
+LOOKAHEAD_DAYS = 7
+EVENT_DURATION = timedelta(hours=2)
+
+# Telesport media_name → Calendar location (yes channel display name)
+# Keys are checked left-to-right, both exact and substring matches.
+CHANNEL_MAP = {
+    "1":      "yes 1 (yes #1)",
+    "11":     "כאן 11 (yes #11)",
+    "12":     "קשת 12 (yes #12)",
+    "13":     "רשת 13 (yes #13)",
+    "14":     "ערוץ 14 (yes #14)",
+    "51":     "ספורט 1 HD (yes #51)",
+    "52":     "ספורט 2 HD (yes #52)",
+    "53":     "ספורט 3 HD (yes #53)",
+    "54":     "ספורט 4 HD (yes #54)",
+    "55":     "5SPORT (yes #55)",
+    "56":     "5PLUS HD (yes #56)",
+    "57":     "5GOLD (yes #57)",
+    "58":     "5LIVE HD (yes #58)",
+    "59":     "5STARS (yes #59)",
+    "61":     "Eurosport 1 (yes #61)",
+    "62":     "Eurosport 2 (yes #62)",
+    "80":     "כאן חינוכית (yes #80)",
+}
+
+# Fallback name-based channel mapping (for channels that don't have yes numbers)
+NAME_CHANNEL_MAP = {
+    "ספורט 1":    "ספורט 1 HD (yes #51)",
+    "ספורט 2":    "ספורט 2 HD (yes #52)",
+    "ספורט 3":    "ספורט 3 HD (yes #53)",
+    "ספורט 4":    "ספורט 4 HD (yes #54)",
+    "ספורט 5":    "5SPORT (yes #55)",
+    "ספורט 5+":   "5LIVE HD (yes #58)",
+    "5PLUS":       "5PLUS HD (yes #56)",
+    "5GOLD":       "5GOLD (yes #57)",
+    "5LIVE":       "5LIVE HD (yes #58)",
+    "5STARS":      "5STARS (yes #59)",
+    "5SPORT":      "5SPORT (yes #55)",
+    "ספורט 6":     "ספורט 6",
+    "ONE":         "ONE",
+    "5 סטארס":    "5STARS (yes #59)",
+    "5 גולד":     "5GOLD (yes #57)",
+    "5 ספורט":    "5SPORT (yes #55)",
+    "ספורט 4K":   "5SPORT 4K (yes #55)",
+    "כאן 11":      "כאן 11 (yes #11)",
+    "קשת 12":     "קשת 12 (yes #12)",
+    "רשת 13":     "רשת 13 (yes #13)",
+    "ערוץ 14":    "ערוץ 14 (yes #14)",
+    "ספורט 5 מקס": "5SPORT 4K (yes #55)",
+}
+
+# Keywords that indicate women's or youth sports → exclude
+EXCLUDE_KEYWORDS = [
+    "נשים", "נקבה", "נוער", "צעירות", "בנות", "ילדות",
+    "עד גיל", "גיל 16", "גיל 18", "גיל 20",
+    "עד 19", "עד 20", "עד 21",
+    "בית ספר", "תלמידות", "תלמידים",
+    "wnba", "u19", "u20", "u21", "מכביה",
+]
+
+# WNBA-specific team nicknames — basketball only (branch_id=2). These are
+# uniquely WNBA team names; no NBA or Euroleague team shares them.
+WNBA_TEAM_NICKNAMES = [
+    "אייסז", "פיבר", "ליברטי", "לינקס", "מרקורי",
+    "סקיי", "סאן", "וינגס", "דרים", "סטורם",
+    "מיסטיקס", "ספארקס",
+]
+
+# Australian league team cities — exclude games between two Australian teams
+AUSTRALIAN_TEAM_CITIES = [
+    "סידני", "מלבורן", "אדלייד", "בריזביין", "בריזבן",
+    "פרת", "קנברה", "וולינגטון", "אוקלנד", "גולד קוסט",
+    "ווסטרן", "ניוקאסל", "סנטרל קוסט", "וסטרן",
+    "מקארתור", "וולינגטון",
+]
+
+# Australian league indicators in title
+AUSTRALIAN_LEAGUE_KEYWORDS = [
+    "איי-ליג", "ליגה אוסטרלית", "אוסטרליה",
+    "A-League", "ALeague", "a league",
+]
+
+# Known Australian team full names (not just city-based)
+AUSTRALIAN_TEAM_NAMES = [
+    "סטירלינג",  # Stirling in Western Australia or other Australian context
+    "היידלברג",  # Heidelberg United (Australian)
+    "סאות מלבורן",  # South Melbourne
+    "וולונגונג",
+    "וולפס",
+]
+
+
+def is_australian_game(title: str) -> bool:
+    """Check if a title represents an Australian league game."""
+    # Check for explicit league keywords
+    title_lower = title.lower()
+    for kw in AUSTRALIAN_LEAGUE_KEYWORDS:
+        if kw in title_lower or kw in title:
+            return True
+    # Check for known Australian team names (singular match is enough)
+    for name in AUSTRALIAN_TEAM_NAMES:
+        if name in title:
+            return True
+    # Check if both team names contain Australian city names
+    parts = re.split(r'\s*-\s*', title, maxsplit=1)
+    if len(parts) == 2:
+        team_a, team_b = parts[0].strip(), parts[1].strip()
+        city_a = any(city in team_a for city in AUSTRALIAN_TEAM_CITIES)
+        city_b = any(city in team_b for city in AUSTRALIAN_TEAM_CITIES)
+        if city_a and city_b:
+            return True
+    return False
+
+
+# Non-game events (draws, lotteries) to always skip
+NON_GAME_KEYWORDS = [
+    "הגרלת", "הגרלה", "גרלה",
+]
+
+# Team name normalization: map known sponsor prefixes to empty (strip them)
+TEAM_ALIASES = {
+    "ארמני":       "",
+    "אולימפיה":     "",
+    "איברוסטאר":    "",
+    "לנובו":        "",
+    "חובנטוד":      "",
+    "קלוב":         "",
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+IL_TZ = timezone(timedelta(hours=3))  # Asia/Jerusalem (UTC+3 during summer)
+
+
+def log(msg):
+    print(f"[live-games-sync] {msg}", file=sys.stderr)
+
+
+def is_wnba(title: str) -> bool:
+    """Check if a basketball game title matches a WNBA team nickname."""
+    for nick in WNBA_TEAM_NICKNAMES:
+        if nick in title:
+            return True
+    return False
+
+
+def is_male_adult(title: str) -> bool:
+    title_lower = title.lower()
+    for kw in EXCLUDE_KEYWORDS:
+        if kw in title_lower:
+            return False
+    return True
+
+
+def is_game_event(title: str) -> bool:
+    for kw in NON_GAME_KEYWORDS:
+        if kw in title:
+            return False
+    return True
+
+
+def normalize_title(title: str) -> str:
+    t = title.strip()
+    for prefix in ["גמר: ", "משחק ", "שידור חוזר: ",
+                   "כדורסל : ", "כדורסל: ",
+                   "כדורגל : ", "כדורגל: "]:
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+    t = re.sub(r'\s+', ' ', t)
+    return t.strip()
+
+
+def strip_team_sponsors(team: str) -> str:
+    words = team.split()
+    filtered = [w for w in words if w not in TEAM_ALIASES]
+    return " ".join(filtered) if filtered else team
+
+
+def sort_teams(title: str) -> str:
+    parts = re.split(r'\s*-\s*', title, maxsplit=1)
+    if len(parts) == 2:
+        a, b = parts[0].strip(), parts[1].strip()
+        if a > b:
+            return f"{b} - {a}"
+    return title
+
+
+def game_fingerprint(title: str) -> str:
+    """Canonical dedup key for a game title.
+
+    Strips: prefixes (גמר:), sponsor names, game numbers. Sorts teams.
+    """
+    t = normalize_title(title)
+    # Strip sponsor names from each team side
+    parts = re.split(r'\s*-\s*', t, maxsplit=1)
+    if len(parts) == 2:
+        a = strip_team_sponsors(parts[0].strip())
+        b = strip_team_sponsors(parts[1].strip())
+        t = f"{a} - {b}"
+    t = sort_teams(t)
+    t = re.sub(r',\s*מ\.\s*\d+', '', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t.strip()
+
+
+def normalize_location_for_dedup(location: str) -> str:
+    """
+    Normalize a location string to a canonical channel identifier for dedup.
+
+    Strip the descriptive part so '5SPORT (yes #55)' and 'ספורט 5'
+    and 'ספורט 5 HD (yes #55)' all resolve to 'yes#55'.
+    Falls back to running through telesport_to_location if no yes# found,
+    then to the raw string.
+    """
+    m = re.search(r'\(yes #(\d+)\)', location)
+    if m:
+        return f"yes#{m.group(1)}"
+    mapped = telesport_to_location(location)
+    if mapped != location:
+        m = re.search(r'\(yes #(\d+)\)', mapped)
+        if m:
+            return f"yes#{m.group(1)}"
+    return location
+
+
+def time_fingerprint(start_iso: str, location: str) -> str:
+    """
+    Create a time+location dedup key with ±15 min tolerance.
+
+    Uses: date (YYYY-MM-DD) + rounded-to-15min time + normalized location.
+    """
+    dt = datetime.fromisoformat(start_iso)
+    date_part = dt.strftime("%Y-%m-%d")
+    minutes = (dt.minute // 15) * 15
+    rounded = dt.replace(minute=minutes, second=0, microsecond=0)
+    loc_normalized = normalize_location_for_dedup(location)
+    return f"{date_part}T{rounded.strftime('%H:%M')}|{loc_normalized}"
+
+
+def telesport_to_location(media_name: str) -> str:
+    """Map Telesport channel name to calendar location string.
+
+    Strategy:
+    1. Try exact NAME_CHANNEL_MAP match
+    2. Try NAME_CHANNEL_MAP substring match (longest key first)
+    3. Fallback to raw media_name
+    """
+    raw = media_name.strip()
+
+    # 1. Exact match
+    if raw in NAME_CHANNEL_MAP:
+        return NAME_CHANNEL_MAP[raw]
+
+    # 2. Substring match — sort keys by length DESC to match "ספורט 5+ לייב" 
+    #    before "ספורט 5", "Here" before "He", etc.
+    for key in sorted(NAME_CHANNEL_MAP, key=len, reverse=True):
+        if key in raw:
+            return NAME_CHANNEL_MAP[key]
+
+    # 3. Fallback
+    return raw
+
+
+def load_local_state() -> set:
+    """Load the set of known event keys from local state file.
+    Also prunes entries older than LOOKAHEAD_DAYS days.
+    """
+    import json
+    state = set()
+    if not os.path.exists(LOCAL_STATE_PATH):
+        return state
+    try:
+        with open(LOCAL_STATE_PATH, "r") as f:
+            data = json.load(f)
+        now = datetime.now(IL_TZ)
+        cutoff = (now - timedelta(days=LOOKAHEAD_DAYS + 1)).isoformat()
+        for key, created_at in data.items():
+            if created_at >= cutoff:
+                state.add(key)
+        return state
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"Warning: cannot read local state: {e}")
+        return state
+
+
+def save_local_state(tfp: str):
+    """Append a new time+location fingerprint to the local state file.
+    Uses a helper file and atomic rename to prevent corruption.
+    """
+    import json
+    now = datetime.now(IL_TZ)
+    state = {}
+    # Read existing
+    if os.path.exists(LOCAL_STATE_PATH):
+        try:
+            with open(LOCAL_STATE_PATH, "r") as f:
+                state = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            state = {}
+    # Add new entry
+    state[tfp] = now.isoformat()
+    # Atomic write
+    tmp = LOCAL_STATE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, LOCAL_STATE_PATH)
+
+
+def fetch_telesport(date_str: str) -> list:
+    """Fetch broadcasts from Telesport API for a given date (YYYY-MM-DD)."""
+    url = TELESPORT_API.format(date=date_str)
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-L", "--max-time", "12",
+             "-A", "Mozilla/5.0", "--compressed", url],
+            capture_output=True, text=True, timeout=15
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            log(f"  Telesport empty for {date_str}")
+            return []
+        data = json.loads(r.stdout)
+        return data
+    except Exception as e:
+        log(f"  Error fetching {date_str}: {e}")
+        return []
+
+
+# ── Calendar Operations ───────────────────────────────────────────────
+
+def get_existing_events(days: int = 7) -> list:
+    """Fetch existing events from Live Games calendar."""
+    now = datetime.now(IL_TZ)
+    lookahead = max(days, LOOKAHEAD_DAYS + 1)
+    time_min = (now - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z")
+    time_max = (now + timedelta(days=lookahead)).strftime("%Y-%m-%dT23:59:59Z")
+
+    params = json.dumps({
+        "calendarId": LIVE_GAMES_CALENDAR_ID,
+        "timeMin": time_min,
+        "timeMax": time_max,
+    })
+
+    try:
+        r = subprocess.run(
+            ["gws", "calendar", "events", "list", "--params", params],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            log(f"gws events list failed: {r.stderr[:200]}")
+            return []
+
+        data = json.loads(r.stdout)
+        items = data.get("items", [])
+        events = []
+        for ev in items:
+            summary = ev.get("summary", "")
+            start = ev.get("start", {}).get("dateTime", "")
+            end = ev.get("end", {}).get("dateTime", "")
+            location = ev.get("location", "")
+            events.append({
+                "id": ev["id"],
+                "summary": summary,
+                "start": start,
+                "end": end,
+                "location": location,
+            })
+
+        # ── Stale local state cleanup ──
+        # Two-tier purge:
+        #   1. Entry's event time is within the scan window but NOT in the calendar → always purge
+        #   2. Entry is >2h old and NOT in the calendar → purge (catches entries for past events)
+        try:
+            import json as _json
+            now = datetime.now(IL_TZ)
+            if os.path.exists(LOCAL_STATE_PATH):
+                with open(LOCAL_STATE_PATH) as f:
+                    raw_state = _json.load(f)
+                # Build set of actual calendar tfps
+                actual_tfps = set()
+                for ev in events:
+                    actual_tfps.add(time_fingerprint(ev["start"], ev["location"]))
+                # Determine scan window bounds from the timeMin/timeMax used in this fetch
+                try:
+                    scan_start = datetime.fromisoformat(time_min.replace("Z", "+00:00"))
+                    scan_end = datetime.fromisoformat(time_max.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    scan_start = scan_end = None
+                purged = []
+                for tfp_key, created_at_str in list(raw_state.items()):
+                    if tfp_key in actual_tfps:
+                        continue
+                    # Try to extract event start time from the tfp key (format: "YYYY-MM-DDTHH:MM|...")
+                    try:
+                        event_time_str = tfp_key.split("|")[0]
+                        event_dt = datetime.fromisoformat(event_time_str)
+                        in_scan_window = scan_start and scan_end and scan_start <= event_dt <= scan_end
+                    except (ValueError, IndexError):
+                        event_dt = None
+                        in_scan_window = False
+
+                    if in_scan_window:
+                        # Event should be in this fetch but isn't — clearly a phantom
+                        purged.append(tfp_key)
+                        del raw_state[tfp_key]
+                    else:
+                        # Outside scan window: use age-based check
+                        try:
+                            created_dt = datetime.fromisoformat(created_at_str)
+                            age_hours = (now - created_dt).total_seconds() / 3600
+                        except (ValueError, TypeError):
+                            age_hours = 999
+                        if age_hours > 2 and tfp_key not in actual_tfps:
+                            purged.append(tfp_key)
+                            del raw_state[tfp_key]
+                if purged:
+                    # Atomic write back
+                    tmp = LOCAL_STATE_PATH + ".tmp"
+                    with open(tmp, "w") as f:
+                        _json.dump(raw_state, f, indent=2)
+                    os.replace(tmp, LOCAL_STATE_PATH)
+                    log(f"  Purged {len(purged)} stale local state entries (not in calendar)")
+                    for p in purged:
+                        log(f"    - {p}")
+        except Exception as e:
+            log(f"  Note: stale cleanup skipped ({e})")
+
+        return events
+    except Exception as e:
+        log(f"Error fetching calendar events: {e}")
+        return []
+
+
+def create_calendar_event(summary: str, start_iso: str, end_iso: str,
+                          location: str, tfp: str) -> bool:
+    """Create a new event in the Live Games calendar. Saves to local state on success."""
+    cmd = [
+        "gws", "calendar", "+insert",
+        "--calendar", LIVE_GAMES_CALENDAR_ID,
+        "--summary", summary,
+        "--start", start_iso,
+        "--end", end_iso,
+        "--location", location,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            log(f"  ✓ Created: {summary}")
+            save_local_state(tfp)
+            return True
+        else:
+            log(f"  ✗ Failed to create '{summary}': {r.stderr[:200]}")
+            return False
+    except Exception as e:
+        log(f"  ✗ Error creating '{summary}': {e}")
+        return False
+
+
+def verify_event_in_calendar(start_iso: str, location: str) -> bool:
+    """Verify a newly created event actually exists in the calendar.
+
+    Queries a narrow window around the event time and checks the
+    time+location fingerprint. Prevents local state from getting out of
+    sync when gws returns success but the event isn't actually persisted.
+    """
+    try:
+        dt = datetime.fromisoformat(start_iso)
+        window_start = (dt - timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        window_end = (dt + timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        params = json.dumps({
+            "calendarId": LIVE_GAMES_CALENDAR_ID,
+            "timeMin": window_start,
+            "timeMax": window_end,
+        })
+
+        r = subprocess.run(
+            ["gws", "calendar", "events", "list", "--params", params],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            log(f"  ⚠️  Verification query failed (rc={r.returncode})")
+            return False
+
+        data = json.loads(r.stdout)
+        items = data.get("items", [])
+        target_tfp = time_fingerprint(start_iso, location)
+        for ev in items:
+            ev_start = ev.get("start", {}).get("dateTime", "")
+            ev_loc = ev.get("location", "")
+            if time_fingerprint(ev_start, ev_loc) == target_tfp:
+                return True
+
+        log(f"  ⚠️  Event not found after creation (tfp={target_tfp})")
+        return False
+    except Exception as e:
+        log(f"  ⚠️  Verification error: {e}")
+        return False
+
+
+# ── Main ──────────────────────────────────────────────────────────────
+
+def main():
+    if "YOUR_CALENDAR_ID" in LIVE_GAMES_CALENDAR_ID:
+        print(
+            "❌ LIVE_GAMES_CALENDAR_ID is not configured.\n"
+            "   Set the env var or create ~/.config/live-games-sync/config.json\n"
+            "   with {\"calendar_id\": \"your-calendar-id@group.calendar.google.com\"}.\n"
+            "   See README.md for instructions.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    dry_run = "--dry-run" in sys.argv
+
+    # Parse --days flag
+    days = LOOKAHEAD_DAYS
+    for i, arg in enumerate(sys.argv):
+        if arg == "--days" and i + 1 < len(sys.argv):
+            try:
+                days = int(sys.argv[i + 1])
+            except ValueError:
+                pass
+
+    if dry_run:
+        log("⚠️  DRY RUN — no events will be created")
+
+    today = datetime.now(IL_TZ)
+    log(f"Scanning {days} days from {today.strftime('%Y-%m-%d')}")
+
+    # ── Step 1: Collect existing calendar events ──
+    log("Fetching existing calendar events...")
+    existing = get_existing_events(days)
+    existing_fingerprints = set()
+    existing_tfps = set()
+    for ev in existing:
+        fp = game_fingerprint(ev["summary"])
+        existing_fingerprints.add(fp)
+        tfp = time_fingerprint(ev["start"], ev["location"])
+        existing_tfps.add(tfp)
+    log(f"  Found {len(existing)} existing events")
+
+    # ── Load local state as additional dedup layer ──
+    local_state_tfps = load_local_state()
+    log(f"  Local state has {len(local_state_tfps)} known event tfps")
+
+    # ── Step 2: Fetch Telesport data ──
+    candidates = []
+    for offset in range(days):
+        day = today + timedelta(days=offset)
+        date_str = day.strftime("%Y-%m-%d")
+        broadcasts = fetch_telesport(date_str)
+        if not broadcasts:
+            continue
+
+        for b in broadcasts:
+            bid = b.get("branch_id")
+            if bid not in (1, 2):
+                continue  # only soccer (1) and basketball (2)
+
+            title = b.get("title", "").strip()
+            if not title:
+                continue
+
+            if not is_male_adult(title):
+                log(f"  Skip (not male adult): {title}")
+                continue
+
+            if bid == 2 and is_wnba(title):
+                log(f"  Skip (WNBA): {title}")
+                continue
+
+            if bid == 2 and "ב'" in title:
+                log(f"  Skip (Summer League / B team): {title}")
+                continue
+
+            if is_australian_game(title):
+                log(f"  Skip (Australian league): {title}")
+                continue
+
+            if not is_game_event(title):
+                log(f"  Skip (not a game): {title}")
+                continue
+
+            time_str = b.get("timeStr", "")
+            media_name = b.get("media_name", "")
+            date_key = b.get("dateKey", date_str)
+            if not time_str:
+                continue
+
+            try:
+                start_dt = datetime.strptime(
+                    f"{date_key}T{time_str}:00", "%Y-%m-%dT%H:%M:%S"
+                )
+                start_dt = start_dt.replace(tzinfo=IL_TZ)
+                end_dt = start_dt + EVENT_DURATION
+            except ValueError as e:
+                log(f"  Skip '{title}' — bad time '{time_str}': {e}")
+                continue
+
+            location = telesport_to_location(media_name)
+
+            # Add sport prefix to title
+            sport_prefix = "כדורסל : " if bid == 2 else "כדורגל : "
+            title = sport_prefix + title
+
+            candidates.append({
+                "title": title,
+                "date_key": date_key,
+                "time_str": time_str,
+                "start_iso": start_dt.isoformat(),
+                "end_iso": end_dt.isoformat(),
+                "location": location,
+                "media_name": media_name,
+                "branch_id": bid,
+            })
+
+    log(f"Found {len(candidates)} candidate games from Telesport")
+
+    # ── Step 3: Deduplicate within Telesport data ──
+    seen_fps = {}
+    seen_tfps = {}
+    deduped = []
+
+    for c in candidates:
+        fp = game_fingerprint(c["title"])
+        tfp = time_fingerprint(c["start_iso"], c["location"])
+
+        # Same game name already seen
+        if fp in seen_fps:
+            existing_entry = seen_fps[fp]
+            if c["location"] != c["media_name"] and existing_entry["location"] == existing_entry["media_name"]:
+                seen_fps[fp] = c
+                deduped = [d for d in deduped if d is not existing_entry]
+                deduped.append(c)
+            continue
+
+        # Same time+channel (different name variant)
+        if tfp in seen_tfps:
+            existing_title = seen_tfps[tfp]["title"]
+            log(f"  Dup (time+loc): '{c['title']}' ← already have '{existing_title}'")
+            continue
+
+        seen_fps[fp] = c
+        seen_tfps[tfp] = c
+        deduped.append(c)
+
+    candidates = deduped
+    log(f"After Telesport dedup: {len(candidates)} unique games")
+
+    # ── Step 4: Cross-check against calendar ──
+    created = 0
+    skipped = 0
+    created_events = []  # (date, time, title, channel) for the report
+
+    for c in candidates:
+        fp = game_fingerprint(c["title"])
+        tfp = time_fingerprint(c["start_iso"], c["location"])
+
+        if fp in existing_fingerprints:
+            log(f"  Skip (in calendar): {c['title']}")
+            skipped += 1
+            continue
+
+        if tfp in existing_tfps:
+            log(f"  Skip (time+loc match calendar): {c['title']}")
+            skipped += 1
+            continue
+
+        # Local state check — catches duplicates when Google API hasn't caught up
+        if tfp in local_state_tfps:
+            log(f"  Skip (local state): {c['title']}")
+            skipped += 1
+            continue
+
+        if dry_run:
+            log(f"  [DRY] Would create: {c['title']} @ {c['start_iso']} → {c['end_iso']} | {c['location']}")
+            created += 1
+            created_events.append((c["date_key"], c["time_str"], c["title"], c["location"]))
+        else:
+            ok = create_calendar_event(
+                summary=c["title"],
+                start_iso=c["start_iso"],
+                end_iso=c["end_iso"],
+                location=c["location"],
+                tfp=tfp,
+            )
+            if ok:
+                created += 1
+                created_events.append((c["date_key"], c["time_str"], c["title"], c["location"]))
+            time.sleep(0.5)
+
+    # ── Report ──
+    action_label = "Created" if not dry_run else "Would create"
+    print(f"\n📋 Live Games Sync Report")
+    print(f"━━━━━━━━━━━━━━━━━━━")
+    print(f"• Scanned: {days} days")
+    print(f"• Existing in calendar: {len(existing)}")
+    print(f"• Telesport candidates: {len(candidates)} unique")
+    print(f"  → {action_label}: {created}")
+    for ev_date, ev_time, ev_title, ev_loc in sorted(created_events):
+        print(f"    • {ev_date} {ev_time} — {ev_title} ({ev_loc})")
+    print(f"  → Skipped: {skipped}")
+
+
+if __name__ == "__main__":
+    main()

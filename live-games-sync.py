@@ -147,6 +147,92 @@ AUSTRALIAN_TEAM_NAMES = [
     "וולפס",
 ]
 
+# ── Omer's soccer content filters (added 2026-08-30) ─────────────────
+# Specific fixtures to always skip — matched via game_fingerprint
+# (team order and sponsor names don't matter).
+SKIP_GAME_TITLES = [
+    "שטרסבורג - לאנס",
+    "פאלרמו - מאנטובה",
+    "היברניאן - הארטס",
+    "קליארי - ורונה",
+    "סטוק - נוריץ'",
+    "ססואולו - פרוסינונה",
+    "אודינזה - ונציה",
+    "זלצבורג - ראפיד וינה",
+    "ברנלי - מידלסברו",
+    "פלקירק - ריינג'רס",
+    "דיז'ון - סט. אטיין",
+    "בנפיקה - אשטוריל",
+    "פארמה - קרמונזה",
+    "טורינו - מונזה",
+]
+
+# South American soccer — entire region excluded (team names in Hebrew).
+# Matched per team-half of the title to avoid cross-matches.
+SOUTH_AMERICAN_TEAMS = [
+    # Brazil
+    "פלמנגו", "פלמיירס", "פלמייראס", "קורינתיאנס", "סאו פאולו",
+    "סנטוס", "סאנטוס", "פלומיננזה", "פלומיננסה", "ואסקו",
+    "גרמיו", "אינטרנסיונל", "בוטאפוגו", "קרוזיירו", "אתלטיקו מיניירו",
+    "אתלטיקו פארננסה", "באיה", "פורטלזה", "קויאבה", "ספורט רסיפה",
+    "נאוטיקו", "סיארה", "ויטוריה", "ז'ובנטודה", "ברגנטינו",
+    "קוריטיבה", "גויאס", "אמריקה מיניירו", "צ'אפקואנסה", "מיראסול",
+    "רד בול ברגנטינו", "אתלטיקו גויאניינסה",
+    # Argentina
+    "בוקה ג'וניורס", "ריבר פלייט", "ראסינג קלוב", "אינדפנדיינטה",
+    "סן לורנסו", "ניואל'ס", "אסטודיאנטס", "רוסאריו סנטראל",
+    "לנוס", "באנפילד", "ארחנטינוס ג'וניורס", "טאלרס", "גודוי קרוז",
+    "דפנסה וחוסטיסיה", "טיגרה", "הורקאן", "חימנסיה", "אוניון",
+    "סנטראל קורדובה", "בלגראנו", "פלטנסה", "אינסטיטוטו",
+    # Uruguay / Colombia / Chile / Paraguay / Ecuador / Peru / Bolivia / Venezuela
+    "פניארול", "נסיונל מונטווידאו", "דאנוביו", "דפנסור ספורטינג",
+    "אתלטיקו נסיונל", "מיונאריוס", "אמריקה קאלי", "ג'וניור ברנקייה",
+    "קולו-קולו", "אוניברסידד דה צ'ילה", "אוניברסידד קאתוליקה",
+    "סרו פורטניו", "אולימפיה אסונסיון", "ליברטד",
+    "ליגה דה קיטו", "ברצלונה גואיאקיל", "אמלק", "אינדפנדיינטה דל ואיה",
+    "אליאנסה לימה", "אוניברסיטריו", "ספורטינג קריסטל",
+    "בוליבר", "סטרונגסט", "קראקאס", "דפורטיבו טאצ'ירה",
+]
+
+# MLS — entire league excluded (team names in Hebrew).
+MLS_TEAMS = [
+    "אינטר מיאמי", "מיאמי", "לוס אנג'לס", "גלאקסי", "ניו יורק",
+    "אטלנטה יונייטד", "סיאטל סאונדרס", "פורטלנד טימברס", "דאלאס",
+    "סט. לואיס סיטי", "שארלוט", "אוסטין", "נאשוויל", "אורלנדו סיטי",
+    "טורונטו", "ונקובר", "מונטריאול", "שיקגו פייר", "קולומבוס",
+    "סינסינטי", "פילדלפיה יוניון", "ניו אינגלנד", "יוסטון",
+    "קנזס סיטי", "מינסוטה", "סולט לייק", "קולורדו רפידס", "סן חוזה",
+    "סן דייגו",
+]
+
+# Turkish Süper Lig — entire league excluded (team names in Hebrew).
+TURKISH_TEAMS = [
+    "גלאטסראיי", "פנרבחצ'ה", "בשיקטש", "טרבזונספור",
+    "איסטנבול בשאקשהיר", "בשאקשהיר", "אדנה דמירספור", "אנטליאספור",
+    "אלניאספור", "סיוואספור", "קסימפאשה", "גזיאנטפ", "קוניאספור",
+    "צ'איקור ריזספור", "קייסריספור", "סמסונספור", "האטייספור",
+    "איופספור", "גוזטפה", "פאטיח קרגומרוק", "אנקרגוצ'ו",
+    "בורסאספור", "דניזליספור", "ארזורומספור", "אמד SK",
+    "גנצ'לרבירליגי", "אוסמנליספור", "אקהיסאר",
+]
+
+# Israeli soccer: only keep games involving these clubs (quote chars
+# normalized away — Telesport mixes " and ״).
+ALLOWED_ISRAELI_TEAMS = [
+    "מכבי תל אביב", "הפועל תל אביב", "מכבי חיפה",
+    "ביתר ירושלים", "הפועל פתח תקווה", "מכבי פתח תקווה",
+]
+
+# Indicators that a game is Israeli (clubs/prefixes unique to Israel).
+# Titles are checked with quote chars removed.
+ISRAELI_TEAM_KEYWORDS = [
+    "מכבי", "הפועל", "ביתר", "בני סכנין", "בני יהודה",
+    "מ.ס", "עירוני", "נס ציונה", "אשדוד", "חדרה", "נתניה",
+    "קרית שמונה", "קריית שמונה", "עכו", "רעננה", "עפולה",
+    "כפר סבא", "ראשון לציון", "הרצליה", "כפר קאסם", "טבריה",
+    "סכנין", "ריינה", "אשקלון", "לוד", "אום אל פאחם",
+]
+
 
 def is_australian_game(title: str) -> bool:
     """Check if a title represents an Australian league game."""
@@ -168,6 +254,52 @@ def is_australian_game(title: str) -> bool:
         if city_a and city_b:
             return True
     return False
+
+
+def _normalize_quotes(s: str) -> str:
+    """Normalize Hebrew geresh/quote variants (Telesport mixes \" and ״)."""
+    return s.replace("״", "").replace('"', "").strip()
+
+
+def is_specific_skip(title: str) -> bool:
+    """Check if a title matches one of Omer's explicit skip fixtures."""
+    fp = game_fingerprint(title)
+    for skip in SKIP_GAME_TITLES:
+        if fp == game_fingerprint(skip):
+            return True
+    return False
+
+
+def is_region_excluded(title: str) -> bool:
+    """Check per team-half of the title against excluded-region team lists.
+
+    Only applies to soccer (caller gates on branch_id == 1).
+    """
+    parts = re.split(r"\s*-\s*", normalize_title(title), maxsplit=1)
+    teams = [parts[0].strip(), parts[1].strip()] if len(parts) == 2 else [normalize_title(title)]
+    for team in teams:
+        for name in SOUTH_AMERICAN_TEAMS:
+            if name in team:
+                return True
+        for name in MLS_TEAMS:
+            if name in team:
+                return True
+        for name in TURKISH_TEAMS:
+            if name in team:
+                return True
+    return False
+
+
+def is_israeli_game(title: str) -> bool:
+    """True if the title contains any Israeli club indicator."""
+    t = _normalize_quotes(title)
+    return any(kw in t for kw in ISRAELI_TEAM_KEYWORDS)
+
+
+def has_allowed_israeli_team(title: str) -> bool:
+    """True if the title contains one of Omer's allowed Israeli clubs."""
+    t = _normalize_quotes(title)
+    return any(team in t for team in ALLOWED_ISRAELI_TEAMS)
 
 
 # Non-game events (draws, lotteries) to always skip
@@ -634,6 +766,18 @@ def main():
             if is_australian_game(title):
                 log(f"  Skip (Australian league): {title}")
                 continue
+
+            # Omer's soccer content filters (branch_id == 1 only)
+            if bid == 1:
+                if is_specific_skip(title):
+                    log(f"  Skip (Omer's explicit skip list): {title}")
+                    continue
+                if is_region_excluded(title):
+                    log(f"  Skip (excluded region — SA/Turkey/MLS): {title}")
+                    continue
+                if is_israeli_game(title) and not has_allowed_israeli_team(title):
+                    log(f"  Skip (Israeli league, no allowed team): {title}")
+                    continue
 
             if not is_game_event(title):
                 log(f"  Skip (not a game): {title}")

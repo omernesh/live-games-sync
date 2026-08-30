@@ -148,23 +148,16 @@ AUSTRALIAN_TEAM_NAMES = [
 ]
 
 # ── Omer's soccer content filters (added 2026-08-30) ─────────────────
-# Specific fixtures to always skip — matched via game_fingerprint
-# (team order and sponsor names don't matter).
-SKIP_GAME_TITLES = [
-    "שטרסבורג - לאנס",
-    "פאלרמו - מאנטובה",
-    "היברניאן - הארטס",
-    "קליארי - ורונה",
-    "סטוק - נוריץ'",
-    "ססואולו - פרוסינונה",
-    "אודינזה - ונציה",
-    "זלצבורג - ראפיד וינה",
-    "ברנלי - מידלסברו",
-    "פלקירק - ריינג'רס",
-    "דיז'ון - סט. אטיין",
-    "בנפיקה - אשטוריל",
-    "פארמה - קרמונזה",
-    "טורינו - מונזה",
+# Teams to always skip — if EITHER team in a title matches, the game is
+# skipped (Omer's rule: these teams aren't interesting in any fixture).
+SKIP_TEAMS = [
+    "שטרסבורג", "לאנס", "פאלרמו", "מאנטובה",
+    "היברניאן", "הארטס", "קליארי", "ורונה",
+    "סטוק", "נוריץ'", "ססואולו", "פרוסינונה",
+    "אודינזה", "ונציה", "זלצבורג", "ראפיד וינה",
+    "ברנלי", "מידלסברו", "פלקירק", "ריינג'רס",
+    "דיז'ון", "סט. אטיין", "בנפיקה", "אשטוריל",
+    "פארמה", "קרמונזה", "טורינו", "מונזה",
 ]
 
 # South American soccer — entire region excluded (team names in Hebrew).
@@ -261,12 +254,24 @@ def _normalize_quotes(s: str) -> str:
     return s.replace("״", "").replace('"', "").strip()
 
 
-def is_specific_skip(title: str) -> bool:
-    """Check if a title matches one of Omer's explicit skip fixtures."""
-    fp = game_fingerprint(title)
-    for skip in SKIP_GAME_TITLES:
-        if fp == game_fingerprint(skip):
-            return True
+def _team_halves(title: str) -> list:
+    """Split a normalized title into its two team halves."""
+    parts = re.split(r"\s*-\s*", normalize_title(title), maxsplit=1)
+    if len(parts) == 2:
+        return [parts[0].strip(), parts[1].strip()]
+    return [normalize_title(title)]
+
+
+def is_skipped_team(title: str) -> bool:
+    """True if EITHER team in the title is on Omer's skip list.
+
+    Omer's rule: skip any game involving one of these teams, regardless
+    of opponent (2026-08-30 clarification).
+    """
+    for team in _team_halves(title):
+        for skip in SKIP_TEAMS:
+            if skip in team:
+                return True
     return False
 
 
@@ -275,9 +280,7 @@ def is_region_excluded(title: str) -> bool:
 
     Only applies to soccer (caller gates on branch_id == 1).
     """
-    parts = re.split(r"\s*-\s*", normalize_title(title), maxsplit=1)
-    teams = [parts[0].strip(), parts[1].strip()] if len(parts) == 2 else [normalize_title(title)]
-    for team in teams:
+    for team in _team_halves(title):
         for name in SOUTH_AMERICAN_TEAMS:
             if name in team:
                 return True
@@ -769,8 +772,8 @@ def main():
 
             # Omer's soccer content filters (branch_id == 1 only)
             if bid == 1:
-                if is_specific_skip(title):
-                    log(f"  Skip (Omer's explicit skip list): {title}")
+                if is_skipped_team(title):
+                    log(f"  Skip (team on Omer's skip list): {title}")
                     continue
                 if is_region_excluded(title):
                     log(f"  Skip (excluded region — SA/Turkey/MLS): {title}")

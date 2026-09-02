@@ -305,9 +305,12 @@ def has_allowed_israeli_team(title: str) -> bool:
     return any(team in t for team in ALLOWED_ISRAELI_TEAMS)
 
 
-# Non-game events (draws, lotteries) to always skip
+# Non-game events (draws, lotteries, press conferences) to always skip
+# מסע"ת = מסיבת עיתונאים (pre-game presser show, not a game). Both quote
+# variants included since Telesport mixes " and ״ (added 2026-09-02).
 NON_GAME_KEYWORDS = [
     "הגרלת", "הגרלה", "גרלה",
+    "מסע\"ת", "מסע״ת",
 ]
 
 # Team name normalization: map known sponsor prefixes to empty (strip them)

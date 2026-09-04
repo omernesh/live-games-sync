@@ -158,6 +158,7 @@ SKIP_TEAMS = [
     "ברנלי", "מידלסברו", "פלקירק", "ריינג'רס",
     "דיז'ון", "סט. אטיין", "בנפיקה", "אשטוריל",
     "פארמה", "קרמונזה", "טורינו", "מונזה",
+    "לה האבר", "ברסט", "לינגבי",  # added 2026-09-04 (Le Havre, Brest, Lyngby)
 ]
 
 # South American soccer — entire region excluded (team names in Hebrew).

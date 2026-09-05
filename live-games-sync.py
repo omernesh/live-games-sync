@@ -114,6 +114,9 @@ EXCLUDE_KEYWORDS = [
     "עד 19", "עד 20", "עד 21",
     "בית ספר", "תלמידות", "תלמידים",
     "wnba", "u19", "u20", "u21", "מכביה",
+    # Israeli 3rd division (ליגה א') — not interesting (Omer, 2026-09-05).
+    # Both quote variants since Telesport mixes ' and ׳.
+    "ליגה א'", "ליגה א׳",
 ]
 
 # WNBA-specific team nicknames — basketball only (branch_id=2). These are

@@ -117,6 +117,9 @@ EXCLUDE_KEYWORDS = [
     # Israeli 3rd division (ליגה א') — not interesting (Omer, 2026-09-05).
     # Both quote variants since Telesport mixes ' and ׳.
     "ליגה א'", "ליגה א׳",
+    # Israeli 2nd division (ליגה לאומית) — not interesting (Omer, 2026-09-06).
+    # Covers "ערוץ הקיבוץ" multi-game multiplexes with no team names.
+    "ליגה לאומית",
     # Israeli High School Basketball League (ליגת התיכונים) — not interesting
     # (Omer, 2026-09-06). Multiplex "ישיר!" broadcasts with no team names.
     "ליגת התיכונים",

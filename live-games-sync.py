@@ -117,6 +117,9 @@ EXCLUDE_KEYWORDS = [
     # Israeli 3rd division (ליגה א') — not interesting (Omer, 2026-09-05).
     # Both quote variants since Telesport mixes ' and ׳.
     "ליגה א'", "ליגה א׳",
+    # Israeli High School Basketball League (ליגת התיכונים) — not interesting
+    # (Omer, 2026-09-06). Multiplex "ישיר!" broadcasts with no team names.
+    "ליגת התיכונים",
 ]
 
 # WNBA-specific team nicknames — basketball only (branch_id=2). These are

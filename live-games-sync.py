@@ -11,6 +11,8 @@ Usage:
   python3 live-games-sync.py          # sync next 7 days
   python3 live-games-sync.py --days 3 # sync next 3 days
   python3 live-games-sync.py --dry-run  # preview only, no creates
+  python3 live-games-sync.py --cleanup-only --since 2026-08-15 --until 2026-10-31
+                                        # one-off duplicate sweep (no creates)
 """
 
 import json, os, subprocess, sys, time
@@ -533,30 +535,51 @@ def fetch_telesport(date_str: str) -> list:
 
 # ── Calendar Operations ───────────────────────────────────────────────
 
-def get_existing_events(days: int = 7) -> list:
-    """Fetch existing events from Live Games calendar."""
+def get_existing_events(days: int = 7, since: str = "", until: str = "") -> list:
+    """Fetch existing events from Live Games calendar.
+
+    Optional `since`/`until` (YYYY-MM-DD) override the default
+    (now-2d .. now+lookahead) window — used by --cleanup-only sweeps.
+    """
     now = datetime.now(IL_TZ)
     lookahead = max(days, LOOKAHEAD_DAYS + 1)
-    time_min = (now - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z")
-    time_max = (now + timedelta(days=lookahead)).strftime("%Y-%m-%dT23:59:59Z")
+    time_min = (f"{since}T00:00:00Z" if since
+                else (now - timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z"))
+    time_max = (f"{until}T23:59:59Z" if until
+                else (now + timedelta(days=lookahead)).strftime("%Y-%m-%dT23:59:59Z"))
 
-    params = json.dumps({
+    base_params = {
         "calendarId": LIVE_GAMES_CALENDAR_ID,
         "timeMin": time_min,
         "timeMax": time_max,
-    })
+        "maxResults": 2500,
+    }
 
     try:
-        r = subprocess.run(
-            ["gws", "calendar", "events", "list", "--params", params],
-            capture_output=True, text=True, timeout=30,
-        )
-        if r.returncode != 0:
-            log(f"gws events list failed: {r.stderr[:200]}")
-            return []
+        # Fetch with bounded pagination — a single page may be silently
+        # truncated (observed 2026-09-11: 32 of 162 events returned with a
+        # nextPageToken that was never followed), which caused the cross-
+        # check to miss existing events.
+        items = []
+        next_token = None
+        for _ in range(10):
+            params = dict(base_params)
+            if next_token:
+                params["pageToken"] = next_token
+            r = subprocess.run(
+                ["gws", "calendar", "events", "list",
+                 "--params", json.dumps(params)],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode != 0:
+                log(f"gws events list failed: {r.stderr[:200]}")
+                return []
+            data = json.loads(r.stdout)
+            items.extend(data.get("items", []))
+            next_token = data.get("nextPageToken")
+            if not next_token:
+                break
 
-        data = json.loads(r.stdout)
-        items = data.get("items", [])
         events = []
         for ev in items:
             summary = ev.get("summary", "")
@@ -569,6 +592,8 @@ def get_existing_events(days: int = 7) -> list:
                 "start": start,
                 "end": end,
                 "location": location,
+                "description": (ev.get("description") or "").strip(),
+                "created": ev.get("created", ""),
             })
 
         # ── Stale local state cleanup ──
@@ -598,7 +623,9 @@ def get_existing_events(days: int = 7) -> list:
                     # Try to extract event start time from the tfp key (format: "YYYY-MM-DDTHH:MM|...")
                     try:
                         event_time_str = tfp_key.split("|")[0]
-                        event_dt = datetime.fromisoformat(event_time_str)
+                        # Keys are IL local time — make aware before
+                        # comparing with the (UTC-aware) scan window.
+                        event_dt = datetime.fromisoformat(event_time_str).replace(tzinfo=IL_TZ)
                         in_scan_window = scan_start and scan_end and scan_start <= event_dt <= scan_end
                     except (ValueError, IndexError):
                         event_dt = None
@@ -703,6 +730,88 @@ def verify_event_in_calendar(start_iso: str, location: str) -> bool:
         return False
 
 
+# ── Duplicate Cleanup ─────────────────────────────────────────────────
+
+def _cleanup_fingerprint(summary: str) -> str:
+    """Strict fingerprint for duplicate collapse.
+
+    Same as game_fingerprint but also removes backslashes — some
+    external writers (e.g. the legacy n8n "calendar updater") escape
+    quotes as \\\" in event summaries.
+    """
+    s = summary.replace("\\", "").replace('"', "").replace("״", "")
+    return game_fingerprint(s)
+
+
+def delete_calendar_event(event_id: str) -> bool:
+    """Delete a single event from the Live Games calendar by ID."""
+    params = json.dumps({
+        "calendarId": LIVE_GAMES_CALENDAR_ID,
+        "eventId": event_id,
+    })
+    try:
+        r = subprocess.run(
+            ["gws", "calendar", "events", "delete", "--params", params],
+            capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            return True
+        log(f"  ✗ Failed to delete {event_id}: {(r.stderr or r.stdout)[:200]}")
+        return False
+    except Exception as e:
+        log(f"  ✗ Error deleting {event_id}: {e}")
+        return False
+
+
+def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
+    """Collapse exact duplicate calendar events.
+
+    A duplicate = same start (to the minute) + same normalized channel +
+    same game fingerprint (title order / sponsor / quote-insensitive).
+    Keeps the canonical copy — preference: no description (Hermes-created)
+    → mapped location ("(yes #NN)") → oldest. Deletes the rest.
+
+    Only groups with >=2 members sharing all three keys are touched, so
+    genuinely different games in the same slot are never affected.
+    Returns number removed (or that would be removed in dry-run).
+    """
+    groups = {}
+    for ev in events:
+        start = ev.get("start", "")
+        loc = ev.get("location", "")
+        summary = ev.get("summary", "")
+        if not start or not summary:
+            continue
+        key = (start[:16], normalize_location_for_dedup(loc),
+               _cleanup_fingerprint(summary))
+        groups.setdefault(key, []).append(ev)
+
+    removed = 0
+    for (start_min, nloc, fp), members in sorted(groups.items()):
+        if len(members) < 2:
+            continue
+
+        def keep_rank(ev):
+            has_desc = 1 if (ev.get("description") or "").strip() else 0
+            not_mapped = 0 if "(yes #" in ev.get("location", "") else 1
+            return (has_desc, not_mapped, ev.get("created", ""))
+
+        ordered = sorted(members, key=keep_rank)
+        keeper = ordered[0]
+        for ev in ordered[1:]:
+            label = (f"{ev.get('summary')} @ {ev.get('start')} "
+                     f"({ev.get('location')})")
+            if dry_run:
+                log(f"  [DRY] Would delete duplicate: {label} "
+                    f"[keep {keeper['id']}]")
+                removed += 1
+                continue
+            if delete_calendar_event(ev["id"]):
+                log(f"  🗑 Deleted duplicate: {label} [kept {keeper['id']}]")
+                removed += 1
+                time.sleep(0.4)
+    return removed
+
+
 # ── Main ──────────────────────────────────────────────────────────────
 
 def main():
@@ -727,11 +836,30 @@ def main():
             except ValueError:
                 pass
 
+    # Parse --cleanup-only / --since / --until (one-off duplicate sweeps)
+    cleanup_only = "--cleanup-only" in sys.argv
+    since = until = ""
+    for i, arg in enumerate(sys.argv):
+        if arg == "--since" and i + 1 < len(sys.argv):
+            since = sys.argv[i + 1]
+        elif arg == "--until" and i + 1 < len(sys.argv):
+            until = sys.argv[i + 1]
+
     if dry_run:
         log("⚠️  DRY RUN — no events will be created")
 
     today = datetime.now(IL_TZ)
     log(f"Scanning {days} days from {today.strftime('%Y-%m-%d')}")
+
+    # ── Cleanup-only sweep (one-off duplicate collapse, no creates) ──
+    if cleanup_only:
+        log("CLEANUP-ONLY mode — collapsing duplicates, no creates")
+        existing = get_existing_events(days, since=since, until=until)
+        log(f"  Found {len(existing)} events")
+        removed = cleanup_duplicates(existing, dry_run=dry_run)
+        tag = "[DRY RUN] would remove" if dry_run else "removed"
+        print(f"🧹 Live Games Duplicate Sweep — {tag}: {removed}")
+        return
 
     # ── Step 1: Collect existing calendar events ──
     log("Fetching existing calendar events...")
@@ -748,6 +876,13 @@ def main():
     # ── Load local state as additional dedup layer ──
     local_state_tfps = load_local_state()
     log(f"  Local state has {len(local_state_tfps)} known event tfps")
+
+    # ── Collapse duplicate events (idempotent safety net) ──
+    # Catches copies written by other systems (e.g. the legacy n8n
+    # "calendar updater") and any historical duplication.
+    duplicates_removed = cleanup_duplicates(existing, dry_run=dry_run)
+    if duplicates_removed:
+        log(f"  Removed {duplicates_removed} duplicate events")
 
     # ── Step 2: Fetch Telesport data ──
     candidates = []
@@ -918,6 +1053,8 @@ def main():
     for ev_date, ev_time, ev_title, ev_loc in sorted(created_events):
         print(f"    • {ev_date} {ev_time} — {ev_title} ({ev_loc})")
     print(f"  → Skipped: {skipped}")
+    if duplicates_removed:
+        print(f"  → Duplicates cleaned: {duplicates_removed}")
 
 
 if __name__ == "__main__":

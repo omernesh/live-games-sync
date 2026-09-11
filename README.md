@@ -64,7 +64,19 @@ python3 live-games-sync.py --dry-run
 
 # Custom lookahead window: sync next 3 days
 python3 live-games-sync.py --days 3
+
+# One-off duplicate sweep over a wide window (no creates)
+python3 live-games-sync.py --cleanup-only --since 2026-08-15 --until 2026-10-31
 ```
+
+### Duplicate Cleanup
+
+Every run also collapses **exact duplicate events** already on the calendar
+(same start minute + same normalized channel + same game fingerprint, e.g.
+copies written by another calendar tool). The canonical copy is kept —
+preference: no description → mapped location ("(yes #NN)") → oldest — and the
+rest are deleted. Genuinely different games sharing a slot are never affected.
+Use `--cleanup-only` for a one-off wide-window sweep.
 
 ### Output
 

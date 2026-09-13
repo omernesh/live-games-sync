@@ -153,11 +153,37 @@ Telesport channel names → yes channel display names:
 |----------|---------|-------------|
 | `LIVE_GAMES_CALENDAR_ID` (env) / `calendar_id` (config) | — | Google Calendar ID to sync to |
 | `LIVE_GAMES_STATE_PATH` (env) / `state_path` (config) | `~/.local/share/live-games-sync/state.json` | Local dedup state file location |
+| `~/.config/live-games-sync/lists.json` | built-in defaults | Editable team lists — skip / protect / league exclusions |
 | `LOOKAHEAD_DAYS` | 7 | How many days ahead to scan |
 | `EVENT_DURATION` | 2 hours | Default event duration |
 | `EXCLUDE_KEYWORDS` | Hebrew keywords | Women's/youth sports to skip |
 | `NON_GAME_KEYWORDS` | Draw/lottery terms | Non-game events to skip |
 | `TEAM_ALIASES` | Sponsor names | Team name variants to normalize |
+
+## Editable Team Lists
+
+Team preferences — which clubs to skip, which are never filtered out, and per-league exclusion lists — live in a single editable file, read at startup:
+
+```
+~/.config/live-games-sync/lists.json
+```
+
+```json
+{
+  "skip_teams":            ["Some Club"],
+  "protected_teams":       ["A Club to Never Filter"],
+  "south_american_teams":  [],
+  "mls_teams":             [],
+  "turkish_teams":         [],
+  "dutch_teams":           [],
+  "gulf_teams":            [],
+  "allowed_israeli_teams": []
+}
+```
+
+- One team per line — adding or removing a team is a one-line change, applied on the next run (no script edits or restarts).
+- `skip_teams` — skip any game involving these teams. `protected_teams` — never filtered out (bypass all exclusion lists). The `*_teams` keys are league-wide exclusions; `allowed_israeli_teams` is the keep-list for Israeli league games.
+- If the file is missing or invalid, the script warns and falls back to its built-in defaults — a bad edit can never crash a sync run.
 
 ## Data Source
 

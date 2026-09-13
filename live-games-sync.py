@@ -159,6 +159,12 @@ AUSTRALIAN_TEAM_NAMES = [
 ]
 
 # ── Omer's soccer content filters (added 2026-08-30) ─────────────────
+# NOTE: the live team lists are loaded at startup from the editable file
+# ~/.config/live-games-sync/lists.json — edit THAT file to add/remove
+# teams (one line per team; no script changes needed). The literals in
+# this file are fallback defaults, used only when the lists file is
+# missing or unreadable.
+#
 # Teams to always skip — if EITHER team in a title matches, the game is
 # skipped (Omer's rule: these teams aren't interesting in any fixture).
 SKIP_TEAMS = [
@@ -283,6 +289,49 @@ ISRAELI_TEAM_KEYWORDS = [
     "כפר סבא", "ראשון לציון", "הרצליה", "כפר קאסם", "טבריה",
     "סכנין", "ריינה", "אשקלון", "לוד", "אום אל פאחם",
 ]
+
+
+# ── Editable team lists loader ───────────────────────────────────────
+# Live team lists come from ~/.config/live-games-sync/lists.json (the
+# "skip list + protected teams in one editable file" consolidation,
+# 2026-09-13). Edit that file for team tweaks; the literals above are
+# fallback defaults only. A missing or corrupt lists file never crashes
+# the sync — it warns to stderr and keeps the defaults.
+
+LISTS_FILE = os.path.expanduser("~/.config/live-games-sync/lists.json")
+
+_EDITABLE_LIST_KEYS = {
+    "skip_teams": "SKIP_TEAMS",
+    "protected_teams": "PROTECTED_TEAMS",
+    "south_american_teams": "SOUTH_AMERICAN_TEAMS",
+    "mls_teams": "MLS_TEAMS",
+    "turkish_teams": "TURKISH_TEAMS",
+    "dutch_teams": "DUTCH_TEAMS",
+    "gulf_teams": "GULF_TEAMS",
+    "allowed_israeli_teams": "ALLOWED_ISRAELI_TEAMS",
+}
+
+
+def _load_editable_lists() -> None:
+    """Override team lists from the editable JSON file (if present)."""
+    try:
+        with open(LISTS_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        print(f"[lists] {LISTS_FILE} missing — using built-in defaults",
+              file=sys.stderr)
+        return
+    except Exception as exc:
+        print(f"[lists] WARNING: bad {LISTS_FILE} ({exc}) — using built-in "
+              f"defaults", file=sys.stderr)
+        return
+    for key, gname in _EDITABLE_LIST_KEYS.items():
+        value = data.get(key)
+        if isinstance(value, list):
+            globals()[gname] = [str(x).strip() for x in value if str(x).strip()]
+
+
+_load_editable_lists()
 
 
 def is_australian_game(title: str) -> bool:

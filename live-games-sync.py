@@ -171,6 +171,7 @@ SKIP_TEAMS = [
     "פארמה", "קרמונזה", "טורינו", "מונזה",
     "לה האבר", "ברסט", "לינגבי",  # added 2026-09-04 (Le Havre, Brest, Lyngby)
     "קובנטרי", "אוסנאברוק",  # added 2026-09-13 (Coventry, Osnabrück)
+    "ליל", "טרואה", "שפילד יונייטד", "ברייטון",  # added 2026-09-13 (Lille, Troyes, Sheffield Utd, Brighton)
 ]
 
 # South American soccer — entire region excluded (team names in Hebrew).

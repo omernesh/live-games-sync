@@ -174,6 +174,14 @@ SKIP_TEAMS = [
     "ליל", "טרואה", "שפילד יונייטד", "ברייטון",  # added 2026-09-13 (Lille, Troyes, Sheffield Utd, Brighton)
 ]
 
+# Protected teams — games involving these are NEVER filtered out (they
+# bypass SKIP_TEAMS / region exclusions / the Israeli restriction).
+# Omer, 2026-09-13: "Never remove Manchester united games" (after
+# 'מנצ'סטר יונייטד - ברייטון' was removed by the Brighton skip).
+PROTECTED_TEAMS = [
+    "מנצ'סטר יונייטד", "מנצ'סטר יוניטד",
+]
+
 # South American soccer — entire region excluded (team names in Hebrew).
 # Matched per team-half of the title to avoid cross-matches.
 SOUTH_AMERICAN_TEAMS = [
@@ -317,6 +325,20 @@ def is_skipped_team(title: str) -> bool:
     for team in _team_halves(title):
         for skip in SKIP_TEAMS:
             if skip in team:
+                return True
+    return False
+
+
+def has_protected_team(title: str) -> bool:
+    """True if EITHER team in the title is on the protected list.
+
+    Protected teams are never filtered out — they bypass SKIP_TEAMS,
+    region exclusions and the Israeli restriction (Omer 2026-09-13:
+    "Never remove Manchester united games").
+    """
+    for team in _team_halves(title):
+        for name in PROTECTED_TEAMS:
+            if name in team:
                 return True
     return False
 
@@ -995,17 +1017,21 @@ def main():
                 log(f"  Skip (Australian league): {title}")
                 continue
 
-            # Omer's soccer content filters (branch_id == 1 only)
+            # Omer's soccer content filters (branch_id == 1 only).
+            # Protected teams (e.g. Manchester United) bypass ALL of them.
             if bid == 1:
-                if is_skipped_team(title):
+                protected = has_protected_team(title)
+                if not protected and is_skipped_team(title):
                     log(f"  Skip (team on Omer's skip list): {title}")
                     continue
-                if is_region_excluded(title):
+                if not protected and is_region_excluded(title):
                     log(f"  Skip (excluded league/region): {title}")
                     continue
-                if is_israeli_game(title) and not has_allowed_israeli_team(title):
+                if not protected and is_israeli_game(title) and not has_allowed_israeli_team(title):
                     log(f"  Skip (Israeli league, no allowed team): {title}")
                     continue
+                if protected:
+                    log(f"  Keep (protected team): {title}")
 
             if not is_game_event(title):
                 log(f"  Skip (not a game): {title}")

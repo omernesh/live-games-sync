@@ -221,6 +221,38 @@ TURKISH_TEAMS = [
     "גנצ'לרבירליגי", "אוסמנליספור", "אקהיסאר",
 ]
 
+# Dutch Eredivisie — entire league excluded (team names in Hebrew).
+# Added 2026-09-13 (Omer: "skip dutch soccer games like ווילם"). Telesport's
+# daily template repeats the same Eredivisie fixtures, so they surface
+# constantly; all Dutch clubs are treated the same.
+DUTCH_TEAMS = [
+    "אייאקס", "פ.ס.וו", "איינדהובן", "פיינורד", "זוולה",
+    "ספרטה רוטרדם", "רוטרדם", "ווילם", "וילם",
+    "אוטרכט", "טוונטה", "חרונינגן", "הירנביין", "נמחן", "ניימכן",
+    "הרקלס", "אלקמאר", "גו אהד", "פורטונה סיטארד",
+    "ואלוויק", "ואלבייק", "נאק ברדה", "אקסלסיור", "טלסטאר",
+    "פולנדם", "פולינדם", "דן האג", "קמבור",
+]
+
+# Saudi/Gulf soccer — entire group excluded (team names in Hebrew).
+# Added 2026-09-13 (Omer: "saudi soccer games, like אל עין, אל נאסר").
+# Covers Saudi Pro League, UAE, Qatar and Kuwait clubs. Hyphen variants
+# ("אל-עין") are matched via hyphen-normalized team halves.
+GULF_TEAMS = [
+    # Saudi Pro League
+    "אל הילאל", "אל נאסר", "אל איתיחאד", "אל אהלי", "אל שאבאב",
+    "אל פתח", "אל טאוון", "אל איתיפאק", "אל ריאד", "אל ח'ליג'",
+    "אל רائد", "אל ווחדה", "אל חזם", "אל קדסיה", "דמאק",
+    # UAE
+    "אל עין", "אל ג'זירה", "אל שארג'ה", "עג'מאן", "אל בטאה",
+    "חור פקאן", "בני יאס",
+    # Qatar
+    "אל סאד", "אל דוחיל", "אל ריאן", "אל רייאן", "אל גרפא",
+    "אל ערבי", "אום סלאל",
+    # Kuwait
+    "אל כווית", "אל סלמיה", "כזמא",
+]
+
 # Israeli soccer: only keep games involving these clubs (quote chars
 # normalized away — Telesport mixes " and ״).
 ALLOWED_ISRAELI_TEAMS = [
@@ -288,19 +320,19 @@ def is_skipped_team(title: str) -> bool:
 
 
 def is_region_excluded(title: str) -> bool:
-    """Check per team-half of the title against excluded-region team lists.
+    """Check per team-half of the title against excluded league/region lists.
 
+    Covers South America / MLS / Turkish Süper Lig (2026-08-30), Dutch
+    Eredivisie and the Saudi/Gulf leagues (2026-09-13). Hyphen variants
+    ("אל-עין" vs "אל עין") are handled by also matching a hyphen-normalized
+    copy of the team half and the list entry.
     Only applies to soccer (caller gates on branch_id == 1).
     """
     for team in _team_halves(title):
-        for name in SOUTH_AMERICAN_TEAMS:
-            if name in team:
-                return True
-        for name in MLS_TEAMS:
-            if name in team:
-                return True
-        for name in TURKISH_TEAMS:
-            if name in team:
+        team_alt = team.replace("-", " ")
+        for name in (SOUTH_AMERICAN_TEAMS + MLS_TEAMS + TURKISH_TEAMS
+                     + DUTCH_TEAMS + GULF_TEAMS):
+            if name in team or name.replace("-", " ") in team_alt:
                 return True
     return False
 
@@ -967,7 +999,7 @@ def main():
                     log(f"  Skip (team on Omer's skip list): {title}")
                     continue
                 if is_region_excluded(title):
-                    log(f"  Skip (excluded region — SA/Turkey/MLS): {title}")
+                    log(f"  Skip (excluded league/region): {title}")
                     continue
                 if is_israeli_game(title) and not has_allowed_israeli_team(title):
                     log(f"  Skip (Israeli league, no allowed team): {title}")

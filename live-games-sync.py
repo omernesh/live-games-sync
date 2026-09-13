@@ -180,6 +180,8 @@ SKIP_TEAMS = [
 # 'מנצ'סטר יונייטד - ברייטון' was removed by the Brighton skip).
 PROTECTED_TEAMS = [
     "מנצ'סטר יונייטד", "מנצ'סטר יוניטד",
+    "ברצלונה", "ריאל מדריד", "באיירן מינכן",
+    "מכבי תל אביב", "הפועל פתח תקווה",
 ]
 
 # South American soccer — entire region excluded (team names in Hebrew).
@@ -238,7 +240,7 @@ TURKISH_TEAMS = [
 DUTCH_TEAMS = [
     "אייאקס", "פ.ס.וו", "איינדהובן", "פיינורד", "זוולה",
     "ספרטה רוטרדם", "רוטרדם", "ווילם", "וילם",
-    "אוטרכט", "טוונטה", "חרונינגן", "הירנביין", "נמחן", "ניימכן",
+    "אוטרכט", "טוונטה", "חרונינגן", "הירנביין", "נמחן", "ניימכן", "ניימיכן",
     "הרקלס", "אלקמאר", "גו אהד", "פורטונה סיטארד",
     "ואלוויק", "ואלבייק", "נאק ברדה", "אקסלסיור", "טלסטאר",
     "פולנדם", "פולינדם", "דן האג", "קמבור",
@@ -334,11 +336,16 @@ def has_protected_team(title: str) -> bool:
 
     Protected teams are never filtered out — they bypass SKIP_TEAMS,
     region exclusions and the Israeli restriction (Omer 2026-09-13:
-    "Never remove Manchester united games").
+    "Never remove Manchester united games"; extended same day to
+    Barcelona, Real Madrid, Bayern Munich, Maccabi TLV, Hapoel PT).
     """
     for team in _team_halves(title):
         for name in PROTECTED_TEAMS:
             if name in team:
+                # 'ברצלונה' must not protect Ecuador's Barcelona SC —
+                # 'ברצלונה גואיאקיל' stays region-excluded.
+                if "גואיאקיל" in team:
+                    continue
                 return True
     return False
 

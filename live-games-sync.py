@@ -369,11 +369,23 @@ def is_game_event(title: str) -> bool:
 
 def normalize_title(title: str) -> str:
     t = title.strip()
-    for prefix in ["גמר: ", "משחק ", "שידור חוזר: ",
-                   "כדורסל : ", "כדורסל: ",
-                   "כדורגל : ", "כדורגל: "]:
-        if t.startswith(prefix):
-            t = t[len(prefix):]
+    # Tournament-program prefixes (e.g. "טורניר הכנה בכדורסל: ") are also
+    # stripped: Telesport rewrites listings between revisions (team matchup
+    # with/without the tournament wrapper, times shifted by ~30 min), and
+    # without this the same broadcast yields different fingerprints.
+    # Loop until stable to handle stacked prefixes
+    # ("כדורסל : טורניר הכנה בכדורסל: X - Y" → "X - Y").
+    prefixes = ["גמר: ", "משחק ", "שידור חוזר: ",
+                "כדורסל : ", "כדורסל: ",
+                "כדורגל : ", "כדורגל: ",
+                "טורניר הכנה בכדורסל: ", "טורניר הכנה: "]
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if t.startswith(prefix):
+                t = t[len(prefix):]
+                changed = True
     t = re.sub(r'\s+', ' ', t)
     return t.strip()
 
@@ -762,16 +774,27 @@ def delete_calendar_event(event_id: str) -> bool:
         return False
 
 
+# Max start-time drift between copies of the same game that still counts
+# as a duplicate. Telesport rewrites listings between revisions and can
+# shift the start time by up to ~30 min; keep a margin above that.
+CLEANUP_TIME_TOLERANCE = timedelta(minutes=60)
+
+
 def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
-    """Collapse exact duplicate calendar events.
+    """Collapse near-duplicate calendar events.
 
-    A duplicate = same start (to the minute) + same normalized channel +
-    same game fingerprint (title order / sponsor / quote-insensitive).
-    Keeps the canonical copy — preference: no description (Hermes-created)
-    → mapped location ("(yes #NN)") → oldest. Deletes the rest.
+    A duplicate = same normalized channel + same game fingerprint (title
+    order / sponsor / quote / tournament-prefix-insensitive) + start times
+    within CLEANUP_TIME_TOLERANCE of each other — the same broadcast gets
+    re-listed by Telesport with title rewrites and time shifts, and legacy
+    writers (e.g. the retired n8n "calendar updater") mirrored older
+    revisions, so copies can differ on both. Keeps the canonical copy —
+    preference: no description (Hermes-created) → mapped location
+    ("(yes #NN)") → oldest. Deletes the rest.
 
-    Only groups with >=2 members sharing all three keys are touched, so
-    genuinely different games in the same slot are never affected.
+    Only time-clusters of >=2 members sharing channel+title keys are
+    touched, so genuinely different games in the same slot are never
+    affected.
     Returns number removed (or that would be removed in dry-run).
     """
     groups = {}
@@ -781,23 +804,32 @@ def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
         summary = ev.get("summary", "")
         if not start or not summary:
             continue
-        key = (start[:16], normalize_location_for_dedup(loc),
+        try:
+            start_dt = datetime.fromisoformat(start)
+        except ValueError:
+            continue
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=IL_TZ)
+        key = (normalize_location_for_dedup(loc),
                _cleanup_fingerprint(summary))
-        groups.setdefault(key, []).append(ev)
+        groups.setdefault(key, []).append((start_dt, ev))
 
     removed = 0
-    for (start_min, nloc, fp), members in sorted(groups.items()):
-        if len(members) < 2:
-            continue
 
-        def keep_rank(ev):
+    def collapse(cluster):
+        nonlocal removed
+        if len(cluster) < 2:
+            return
+
+        def keep_rank(item):
+            ev = item[1]
             has_desc = 1 if (ev.get("description") or "").strip() else 0
             not_mapped = 0 if "(yes #" in ev.get("location", "") else 1
             return (has_desc, not_mapped, ev.get("created", ""))
 
-        ordered = sorted(members, key=keep_rank)
-        keeper = ordered[0]
-        for ev in ordered[1:]:
+        ordered = sorted(cluster, key=keep_rank)
+        keeper = ordered[0][1]
+        for _, ev in ordered[1:]:
             label = (f"{ev.get('summary')} @ {ev.get('start')} "
                      f"({ev.get('location')})")
             if dry_run:
@@ -809,6 +841,17 @@ def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
                 log(f"  🗑 Deleted duplicate: {label} [kept {keeper['id']}]")
                 removed += 1
                 time.sleep(0.4)
+
+    for (nloc, fp), members in sorted(groups.items()):
+        members.sort(key=lambda m: m[0])
+        cluster = [members[0]]
+        for m in members[1:]:
+            if m[0] - cluster[0][0] <= CLEANUP_TIME_TOLERANCE:
+                cluster.append(m)
+            else:
+                collapse(cluster)
+                cluster = [m]
+        collapse(cluster)
     return removed
 
 

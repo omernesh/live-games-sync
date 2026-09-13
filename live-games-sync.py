@@ -173,6 +173,7 @@ SKIP_TEAMS = [
     "קובנטרי", "אוסנאברוק",  # added 2026-09-13 (Coventry, Osnabrück)
     "ליל", "טרואה", "שפילד יונייטד", "ברייטון",  # added 2026-09-13 (Lille, Troyes, Sheffield Utd, Brighton)
     "פמאליקאו", "ספורטינג ליסבון",  # added 2026-09-13 (Famalicão, Sporting Lisbon)
+    "מידטיילנד", "ברונדבי", "מץ", "גנואה", "סודטירול", "אספניול", "ראיו ואייקאנו",  # added 2026-09-13 (Midtjylland, Brøndby, Metz, Genoa, Südtirol, Espanyol, Rayo Vallecano)
 ]
 
 # Protected teams — games involving these are NEVER filtered out (they

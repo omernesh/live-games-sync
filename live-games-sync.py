@@ -373,11 +373,16 @@ def is_skipped_team(title: str) -> bool:
     """True if EITHER team in the title is on Omer's skip list.
 
     Omer's rule: skip any game involving one of these teams, regardless
-    of opponent (2026-08-30 clarification).
+    of opponent (2026-08-30 clarification). Short entries (<=3 chars, no
+    spaces — e.g. "האל", "מץ") match only as whole words, so they never
+    trip on longer phrases like "ליגת האלופות".
     """
     for team in _team_halves(title):
         for skip in SKIP_TEAMS:
-            if skip in team:
+            if len(skip) <= 3 and " " not in skip:
+                if re.search(rf"(?<![א-ת]){re.escape(skip)}(?![א-ת])", team):
+                    return True
+            elif skip in team:
                 return True
     return False
 

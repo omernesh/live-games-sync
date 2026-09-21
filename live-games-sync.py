@@ -141,6 +141,11 @@ AUSTRALIAN_TEAM_CITIES = [
     "פרת", "קנברה", "וולינגטון", "אוקלנד", "גולד קוסט",
     "ווסטרן", "ניוקאסל", "סנטרל קוסט", "וסטרן",
     "מקארתור", "וולינגטון",
+    # NBL (Australian basketball) spellings — added 2026-09-21 (Omer:
+    # "Skip: Australian basketball"). Telesport spells Brisbane "בריסביין"
+    # and Illawarra "אילוורה" — neither matched the soccer-spelled entries.
+    "בריסביין", "אילוורה", "קאירנס", "קיירנס", "טסמניה",
+    "טזמניה", "ברייקרס", "טאיפאנס", "ג'קג'מפרס", "ג׳קג׳מפרס",
 ]
 
 # Australian league indicators in title
@@ -156,6 +161,8 @@ AUSTRALIAN_TEAM_NAMES = [
     "סאות מלבורן",  # South Melbourne
     "וולונגונג",
     "וולפס",
+    # NBL teams — single-side name matches (added 2026-09-21)
+    "בריסביין בולטס", "אילוורה הוקס", "ניו זילנד ברייקרס",
 ]
 
 # ── Omer's soccer content filters (added 2026-08-30) ─────────────────
@@ -309,6 +316,8 @@ _EDITABLE_LIST_KEYS = {
     "dutch_teams": "DUTCH_TEAMS",
     "gulf_teams": "GULF_TEAMS",
     "allowed_israeli_teams": "ALLOWED_ISRAELI_TEAMS",
+    "australian_cities": "AUSTRALIAN_TEAM_CITIES",
+    "australian_teams": "AUSTRALIAN_TEAM_NAMES",
 }
 
 

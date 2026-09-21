@@ -135,6 +135,15 @@ WNBA_TEAM_NICKNAMES = [
     "מיסטיקס", "ספארקס",
 ]
 
+# Women's-team names that appear WITHOUT a "בנות"/"נשים" marker in the
+# title — matched as substrings (editable via lists.json "women_teams").
+# Omer 2026-09-21: "always skip women basketball" — after
+# "פרותיאס וולאס - אליצור רמלה" (EuroCup Women) slipped into the calendar.
+WOMEN_TEAM_NAMES = [
+    "אליצור רמלה",
+    "פרותיאס וולאס",
+]
+
 # Australian league team cities — exclude games between two Australian teams
 AUSTRALIAN_TEAM_CITIES = [
     "סידני", "מלבורן", "אדלייד", "בריזביין", "בריזבן",
@@ -318,6 +327,7 @@ _EDITABLE_LIST_KEYS = {
     "allowed_israeli_teams": "ALLOWED_ISRAELI_TEAMS",
     "australian_cities": "AUSTRALIAN_TEAM_CITIES",
     "australian_teams": "AUSTRALIAN_TEAM_NAMES",
+    "women_teams": "WOMEN_TEAM_NAMES",
 }
 
 
@@ -477,6 +487,15 @@ def is_wnba(title: str) -> bool:
     """Check if a basketball game title matches a WNBA team nickname."""
     for nick in WNBA_TEAM_NICKNAMES:
         if nick in title:
+            return True
+    return False
+
+
+def is_women_team(title: str) -> bool:
+    """True when a title features a known women's-only team whose name
+    carries no explicit gender marker (e.g. אליצור רמלה)."""
+    for name in WOMEN_TEAM_NAMES:
+        if name in title:
             return True
     return False
 
@@ -1080,6 +1099,10 @@ def main():
 
             if bid == 2 and is_wnba(title):
                 log(f"  Skip (WNBA): {title}")
+                continue
+
+            if is_women_team(title):
+                log(f"  Skip (women's game): {title}")
                 continue
 
             if bid == 2 and "ב'" in title:

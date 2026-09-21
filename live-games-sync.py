@@ -532,10 +532,16 @@ def is_women_team(title: str) -> bool:
     """True when a title features a known women's-only team (BASKETBALL
     context — call sites gate on branch_id == 2 / "כדורסל"; several names
     collide with soccer clubs, so never apply ungated). Quote glyphs are
-    normalized so ג'יאס ≡ ג׳יאס etc."""
+    normalized so ג'יאס ≡ ג׳יאס. Short entries (<=4 chars, no spaces —
+    e.g. "צליה", "ניון", "פרול") match only as whole words, so "צליה"
+    never trips inside "הרצליה" (same convention as is_skipped_team)."""
     t = _norm_quote_glyphs(title)
     for name in WOMEN_TEAM_NAMES:
-        if _norm_quote_glyphs(name) in t:
+        n = _norm_quote_glyphs(name)
+        if len(n) <= 4 and " " not in n:
+            if re.search(rf"(?<![א-ת]){re.escape(n)}(?![א-ת])", t):
+                return True
+        elif n in t:
             return True
     return False
 

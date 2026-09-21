@@ -135,13 +135,38 @@ WNBA_TEAM_NICKNAMES = [
     "מיסטיקס", "ספארקס",
 ]
 
-# Women's-team names that appear WITHOUT a "בנות"/"נשים" marker in the
-# title — matched as substrings (editable via lists.json "women_teams").
-# Omer 2026-09-21: "always skip women basketball" — after
-# "פרותיאס וולאס - אליצור רמלה" (EuroCup Women) slipped into the calendar.
+# Women's-team names / tokens without a "בנות"/"נשים" marker in the title.
+# BASKETBALL-ONLY by design — several club names collide with SOCCER clubs
+# (בנפיקה, מונפלייה, ג'ירונה, ברנו, אוסטרבה, פוזנן…) so the call sites gate
+# this check to basketball (branch_id == 2) and "כדורסל" events. NEVER apply
+# ungated.
+# Deliberately EXCLUDED (same name as a men's team aired on TV — adding them
+# would silently kill men's games and can't be name-filtered): אולימפיאקוס,
+# בשיקטאש, פנאתינאיקוס, הכוכב האדום, ונציה, אלבה ברלין.
+# Omer 2026-09-21: "always skip women basketball" + "scan the internet and
+# add all the eurocup women teams" (source: FIBA 26-27 roster + ELW
+# qualifier drop-downs; apostrophe/quote glyphs normalized by the matcher).
+# Editable via lists.json "women_teams".
 WOMEN_TEAM_NAMES = [
-    "אליצור רמלה",
-    "פרותיאס וולאס",
+    # Israeli clubs
+    "אליצור רמלה", "נווה דוד רמלה", "בנות אשדוד", "מכבי בנות אשדוד",
+    # EuroCup Women 26-27 — qualifiers
+    "פרותיאס וולאס", "באקסי פרול", "פרול", "ברואה", "שארטר",
+    "ג'יאס", "אסטיפונה", "אסטפונה", "חומוטוב",
+    "זארלואי", "סארלואי", "רבנס",
+    # EuroCup Women 26-27 — regular season
+    "לימסול", "נאמור", "דרתונה", "דרטונה", "פריבורג", "מונטנה",
+    "מונפלייה", "קסטורס", "קאסטורס", "מרסין", "צ'וקורובה", "צוקורובה",
+    "צליה", "שרנה", "שארנה", "ברנדיס", "אנסיניו", "הלסינקי",
+    "חייריס", "ג'איריס", "גוז'וב", "גורז'וב", "לנדרנו",
+    "קמפובאסו", "רוז'ומברוק", "רוזומברוק", "אבנידה", "ניון",
+    "פנאתליטיקוס", "פנתליטיקוס", "פנסראיקוס", "קלטרן", "אוסטרבה",
+    "בנפיקה", "שלזה", "TTT ריגה", "טי טי טי ריגה", "טי.טי.טי ריגה",
+    "אוניברסיטת קלוז'", "סטודנט ניש", "סטודנט ניס", "וילנב",
+    "ברוד נא סבי", "ברוד על הסווה",
+    # EuroLeague Women qualifiers — losers drop into EuroCup RS
+    "ברנו", "פלאמס", "דיושגיור", "DVTK", "שופרון",
+    "קיבירקשטיס", "קיבירקסטיס", "פוזנן", "ג'ירונה", "אמלק",
 ]
 
 # Australian league team cities — exclude games between two Australian teams
@@ -491,11 +516,26 @@ def is_wnba(title: str) -> bool:
     return False
 
 
+_APOSTROPHE_VARIANTS = "\u05f3\u2019\u02bc"  # ׳ ’ ʼ
+_QUOTE_VARIANTS = "\u05f4\u201d\u201c"  # ״ ” “
+
+
+def _norm_quote_glyphs(s: str) -> str:
+    for ch in _APOSTROPHE_VARIANTS:
+        s = s.replace(ch, "'")
+    for ch in _QUOTE_VARIANTS:
+        s = s.replace(ch, '"')
+    return s
+
+
 def is_women_team(title: str) -> bool:
-    """True when a title features a known women's-only team whose name
-    carries no explicit gender marker (e.g. אליצור רמלה)."""
+    """True when a title features a known women's-only team (BASKETBALL
+    context — call sites gate on branch_id == 2 / "כדורסל"; several names
+    collide with soccer clubs, so never apply ungated). Quote glyphs are
+    normalized so ג'יאס ≡ ג׳יאס etc."""
+    t = _norm_quote_glyphs(title)
     for name in WOMEN_TEAM_NAMES:
-        if name in title:
+        if _norm_quote_glyphs(name) in t:
             return True
     return False
 
@@ -1101,7 +1141,7 @@ def main():
                 log(f"  Skip (WNBA): {title}")
                 continue
 
-            if is_women_team(title):
+            if bid == 2 and is_women_team(title):
                 log(f"  Skip (women's game): {title}")
                 continue
 

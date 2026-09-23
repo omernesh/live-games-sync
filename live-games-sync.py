@@ -125,6 +125,9 @@ EXCLUDE_KEYWORDS = [
     # Israeli High School Basketball League (ליגת התיכונים) — not interesting
     # (Omer, 2026-09-06). Multiplex "ישיר!" broadcasts with no team names.
     "ליגת התיכונים",
+    # European clubs 6X6 championship — not interesting (Omer, 2026-09-21:
+    # "skip 6x6 soccer"). Matched lowercased, so "6X6" is covered.
+    "6x6",
 ]
 
 # WNBA-specific team nicknames — basketball only (branch_id=2). These are
@@ -314,6 +317,43 @@ GULF_TEAMS = [
     "אל כווית", "אל סלמיה", "כזמא",
 ]
 
+# African soccer & basketball — skip (Omer 2026-09-21: "skip african
+# soccer and basketball"). Matched per team-half; short entries (<=4
+# chars, no spaces — "לוב", "מאלי", "צ'אד", "בנין", "קניה", "גבון",
+# "טוגו", "גאנה", "סנגל") are whole-word matched so "לוב" never trips
+# inside "לובליאנה". The "אפריק" keyword in is_african_game() catches
+# wrapper titles ("אליפות אפריקה", "ליגת האלופות האפריקאית"). Editable
+# via lists.json "african_teams".
+AFRICAN_TEAMS = [
+    # North Africa
+    "מצרים", "מרוקו", "אלג'יריה", "אלג'יר", "תוניסיה", "לוב", "סודאן",
+    # West Africa
+    "ניגריה", "גאנה", "חוף השנהב", "סנגל", "מאלי", "בורקינה פאסו",
+    "גינאה", "גינאה ביסאו", "סיירה לאון", "ליבריה", "טוגו", "בנין",
+    "ניז'ר", "גמביה", "כף ורדה", "מאוריטניה",
+    # Central Africa
+    "קמרון", "גבון", "קונגו", "הרפובליקה הדמוקרטית של קונגו",
+    "הרפובליקה המרכז אפריקאית", "הרפובליקה המרכז-אפריקאית",
+    "מרכז אפריקאית", "מרכז-אפריקאית", "צ'אד", "גינאה המשוונית",
+    "סאו טומה",
+    # East Africa
+    "אתיופיה", "אריתריאה", "ג'יבוטי", "סומליה", "קניה", "אוגנדה",
+    "טנזניה", "רואנדה", "בורונדי", "דרום סודאן", "מדגסקאר", "מדגסקר",
+    "מאוריציוס", "סיישל", "קומורו",
+    # Southern Africa
+    "דרום אפריקה", "נמיביה", "בוצואנה", "בוטסואנה", "זימבבואה",
+    "זמביה", "מוזמביק", "מלאווי", "לסוטו", "אסוואטיני", "סווזילנד",
+    "אנגולה",
+    # Clubs — CAF competitions (soccer)
+    "אל-אהלי", "אל אהלי", "אלאהלי", "זמאלק", "קזבלנקה", "וידאד",
+    "ווידאד", "ראג'ה", "רג'ה", "אספרנס", "אספראנס", "קלוב אפריקן",
+    "פרימיירו דה אגוסטו", "פטרו דה לואנדה", "לואנדה",
+    "קייזר צ'יפס", "ממלודי סאנדאונס", "סאנדאונס", "אורלנדו פירטס",
+    # Clubs — Basketball Africa League
+    "מונאסטיר", "מונסטיר", "פוס רבאט", "סיטי אוילרס", "ריברס הופרס",
+    "סטאד מאליאן", "דואן",
+]
+
 # Israeli soccer: only keep games involving these clubs (quote chars
 # normalized away — Telesport mixes " and ״).
 ALLOWED_ISRAELI_TEAMS = [
@@ -349,6 +389,7 @@ _EDITABLE_LIST_KEYS = {
     "turkish_teams": "TURKISH_TEAMS",
     "dutch_teams": "DUTCH_TEAMS",
     "gulf_teams": "GULF_TEAMS",
+    "african_teams": "AFRICAN_TEAMS",
     "allowed_israeli_teams": "ALLOWED_ISRAELI_TEAMS",
     "australian_cities": "AUSTRALIAN_TEAM_CITIES",
     "australian_teams": "AUSTRALIAN_TEAM_NAMES",
@@ -465,6 +506,29 @@ def is_region_excluded(title: str) -> bool:
         for name in (SOUTH_AMERICAN_TEAMS + MLS_TEAMS + TURKISH_TEAMS
                      + DUTCH_TEAMS + GULF_TEAMS):
             if name in team or name.replace("-", " ") in team_alt:
+                return True
+    return False
+
+
+def is_african_game(title: str) -> bool:
+    """True for African soccer/basketball (Omer 2026-09-21: "skip
+    african soccer and basketball"). Keyword layer catches wrapper
+    titles ("אליפות אפריקה", "ליגת האלופות האפריקאית"); the team list
+    matches per half, with short entries (<=4 chars, no spaces) matched
+    whole-word only (so "לוב" never trips inside "לובליאנה") and hyphen
+    variants handled like is_region_excluded. Protected teams bypass at
+    the caller."""
+    if "אפריק" in title:
+        return True
+    for team in _team_halves(title):
+        t = _norm_quote_glyphs(team)
+        t_alt = t.replace("-", " ")
+        for name in AFRICAN_TEAMS:
+            n = _norm_quote_glyphs(name)
+            if len(n) <= 4 and " " not in n:
+                if re.search(rf"(?<![א-ת]){re.escape(n)}(?![א-ת])", t):
+                    return True
+            elif n in t or n.replace("-", " ") in t_alt:
                 return True
     return False
 
@@ -1157,6 +1221,13 @@ def main():
 
             if is_australian_game(title):
                 log(f"  Skip (Australian league): {title}")
+                continue
+
+            # African soccer & basketball — skip (Omer 2026-09-21: "skip
+            # african soccer and basketball"). Protected teams bypass —
+            # they may legitimately face African clubs (world finals).
+            if not has_protected_team(title) and is_african_game(title):
+                log(f"  Skip (African game): {title}")
                 continue
 
             # Omer's soccer content filters (branch_id == 1 only).

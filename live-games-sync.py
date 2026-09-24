@@ -644,6 +644,11 @@ def normalize_title(title: str) -> str:
             if t.startswith(prefix):
                 t = t[len(prefix):]
                 changed = True
+    # Strip a trailing score suffix added by the scores-updater (e.g.
+    # "X - Y (86-84)") so a renamed event still fingerprints the same as
+    # its original broadcast — otherwise the sync re-creates a duplicate
+    # right after a score rename (Omer 2026-09-24).
+    t = re.sub(r'\s*\(\d{1,3}\s*[-–—]\s*\d{1,3}\)\s*$', '', t)
     t = re.sub(r'\s+', ' ', t)
     return t.strip()
 
@@ -1047,8 +1052,9 @@ def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
     re-listed by Telesport with title rewrites and time shifts, and legacy
     writers (e.g. the retired n8n "calendar updater") mirrored older
     revisions, so copies can differ on both. Keeps the canonical copy —
-    preference: no description (Hermes-created) → mapped location
-    ("(yes #NN)") → oldest. Deletes the rest.
+    preference: scored copy (Flashscore boxscore in description) → blank
+    (Hermes-created) → other descriptions; then mapped location
+    ("(yes #NN)"); then oldest. Deletes the rest.
 
     Only time-clusters of >=2 members sharing channel+title keys are
     touched, so genuinely different games in the same slot are never
@@ -1081,9 +1087,19 @@ def cleanup_duplicates(events: list, dry_run: bool = False) -> int:
 
         def keep_rank(item):
             ev = item[1]
-            has_desc = 1 if (ev.get("description") or "").strip() else 0
+            desc = (ev.get("description") or "").strip()
+            # Scored copy (scores-updater: Flashscore boxscore in the
+            # description) outranks everything; then blank (Hermes-created);
+            # then other descriptions. 2026-09-24: a score rename used to
+            # let the blank replica win, which would delete the score.
+            if "flashscore.com/match/" in desc:
+                tier = 0
+            elif not desc:
+                tier = 1
+            else:
+                tier = 2
             not_mapped = 0 if "(yes #" in ev.get("location", "") else 1
-            return (has_desc, not_mapped, ev.get("created", ""))
+            return (tier, not_mapped, ev.get("created", ""))
 
         ordered = sorted(cluster, key=keep_rank)
         keeper = ordered[0][1]

@@ -644,6 +644,20 @@ def normalize_title(title: str) -> str:
             if t.startswith(prefix):
                 t = t[len(prefix):]
                 changed = True
+    # 2026-09-30 (Argentina–Bolivia dup): also strip ANY remaining leading
+    # "<label>: " segment — Telesport adds/drops wrappers between revisions
+    # ("ידידות:", "מוקדמות המונדיאל:", "חגיגה אירופית:" …) that can't be
+    # enumerated ahead of time. Only strip when the remainder still has a
+    # " - " team separator and the label is short (≤40 chars); loop for
+    # stacked labels ("כדורגל : ידידות: X - Y" → "X - Y").
+    for _ in range(4):
+        m0 = re.match(r'^\s*[^:]{1,40}\s*:\s+(.+)$', t)
+        if not m0:
+            break
+        rest = m0.group(1).strip()
+        if ' - ' not in rest:
+            break
+        t = rest
     # Strip a trailing score suffix added by the scores-updater (e.g.
     # "X - Y (86-84)") so a renamed event still fingerprints the same as
     # its original broadcast — otherwise the sync re-creates a duplicate

@@ -226,6 +226,14 @@ SKIP_TEAMS = [
     "מידטיילנד", "ברונדבי", "מץ", "גנואה", "סודטירול", "אספניול", "ראיו ואייקאנו",  # added 2026-09-13 (Midtjylland, Brøndby, Metz, Genoa, Südtirol, Espanyol, Rayo Vallecano)
 ]
 
+# Basketball-only skip list (Omer 2026-11-05: "Skip פלורידה גייטורס ומיאמי הוריקנס" — NCAA games
+# on ONE). Separate from SKIP_TEAMS on purpose: that list is soccer-gated (short soccer names
+# collide with basketball clubs). EITHER team matching skips the game (same rule as the soccer
+# list); protected teams bypass. Defined BEFORE _load_editable_lists() runs so lists.json
+# "skip_basketball_teams" overrides it (a literal defined after the loader call silently
+# overrides the file — that is what KOREAN_TEAMS does today).
+SKIP_BASKETBALL_TEAMS = ["פלורידה גייטורס", "מיאמי הוריקנס"]
+
 # Protected teams — games involving these are NEVER filtered out (they
 # bypass SKIP_TEAMS / region exclusions / the Israeli restriction).
 # Omer, 2026-09-13: "Never remove Manchester united games" (after
@@ -383,6 +391,7 @@ LISTS_FILE = os.path.expanduser("~/.config/live-games-sync/lists.json")
 
 _EDITABLE_LIST_KEYS = {
     "skip_teams": "SKIP_TEAMS",
+    "skip_basketball_teams": "SKIP_BASKETBALL_TEAMS",
     "protected_teams": "PROTECTED_TEAMS",
     "south_american_teams": "SOUTH_AMERICAN_TEAMS",
     "mls_teams": "MLS_TEAMS",
@@ -390,6 +399,7 @@ _EDITABLE_LIST_KEYS = {
     "dutch_teams": "DUTCH_TEAMS",
     "gulf_teams": "GULF_TEAMS",
     "african_teams": "AFRICAN_TEAMS",
+    "korean_teams": "KOREAN_TEAMS",
     "allowed_israeli_teams": "ALLOWED_ISRAELI_TEAMS",
     "australian_cities": "AUSTRALIAN_TEAM_CITIES",
     "australian_teams": "AUSTRALIAN_TEAM_NAMES",
@@ -473,6 +483,23 @@ def is_skipped_team(title: str) -> bool:
     return False
 
 
+def is_skipped_basketball_team(title: str) -> bool:
+    """True if EITHER team in a basketball title is on the basketball skip list
+    (Omer 2026-11-05). Same matching rules as is_skipped_team — short entries (<=4 chars, no
+    spaces) match whole-word only; quote glyphs normalized. Callers MUST gate on bid == 2 /
+    "כדורסל": never apply this to soccer titles."""
+    for team in _team_halves(title):
+        t = _norm_quote_glyphs(team)
+        for name in SKIP_BASKETBALL_TEAMS:
+            n = _norm_quote_glyphs(name)
+            if len(n) <= 4 and " " not in n:
+                if re.search(rf"(?<![א-ת]){re.escape(n)}(?![א-ת])", t):
+                    return True
+            elif n in t:
+                return True
+    return False
+
+
 def has_protected_team(title: str) -> bool:
     """True if EITHER team in the title is on the protected list.
 
@@ -539,11 +566,59 @@ def is_israeli_game(title: str) -> bool:
     return any(kw in t for kw in ISRAELI_TEAM_KEYWORDS)
 
 
+def is_korean_game(title: str) -> bool:
+    """Korean soccer/basketball/volleyball — skip entirely (Omer 2026-10-12:
+    "skip korean sports all together"). Keyword layer for wrapper titles
+    ("ליגת העל הקוריאנית"), team list per team-half with the short-entry
+    whole-word rule (mirrors is_african_game). Protected teams bypass at
+    the caller."""
+    for kw in KOREAN_KEYWORDS:
+        if kw in title:
+            return True
+    for team in _team_halves(title):
+        t = _norm_quote_glyphs(team)
+        t_alt = t.replace("-", " ")
+        for name in KOREAN_TEAMS:
+            n = _norm_quote_glyphs(name)
+            if len(n) <= 4 and " " not in n:
+                if re.search(rf"(?<![א-ת]){re.escape(n)}(?![א-ת])", t):
+                    return True
+            elif n in t or n.replace("-", " ") in t_alt:
+                return True
+    return False
+
+
+def has_skip_sport(title: str) -> bool:
+    """Whole-title sport keyword skip (e.g. כדורעף) — Omer 2026-10-12:
+    "skip ליגת העל בכדורעף". Catches the volleyball league's round-recap
+    wrapper events; applies to every branch."""
+    return any(kw in title for kw in SKIP_SPORT_KEYWORDS)
+
+
 def has_allowed_israeli_team(title: str) -> bool:
     """True if the title contains one of Omer's allowed Israeli clubs."""
     t = _normalize_quotes(title)
     return any(team in t for team in ALLOWED_ISRAELI_TEAMS)
 
+
+# Korean sports — skip entirely (Omer 2026-10-12: "skip korean sports all
+# together"). Mirrors the African pattern: keyword layer for wrapper titles
+# ("ליגת העל הקוריאנית", "K League"...), team list for club fixtures.
+# Editable via lists.json "korean_teams".
+KOREAN_TEAMS = [
+    # K League 1 & 2 clubs (Hebrew spellings Telesport uses)
+    "גאנגוון", "פנום פן", "אולסן", "פוהאנג", "צ'ונבוק", "סואון", "אולסאן",
+    "ג'ג'ו", "טאגו", "אינצ'ון", "קוואנגג'ו", "דאיגו", "סאגאן", "גימצ'ון",
+    "צ'ונאן", "בוצ'ון", "סהונג", "פוצ'ון", "קימפו", "צ'ונגבוק",
+    # Basketball (KBL) + volleyball (V-League) clubs
+    "סיאול סמסונג", "צ'אנגג'ונג'", "אניאנג", "צ'ונגסון",
+]
+KOREAN_KEYWORDS = ["קוריא", "דרום קוריאנית", "הקוריאנית"]  # קוריא* catches all variants
+
+# Sports/leagues to skip by keyword — whole-title match (wrapper events included).
+# Volleyball (Omer 2026-10-12: "skip ליגת העל בכדורעף") — the Israeli Premier
+# volleyball league airs round recaps as "כדורעף : ליגת העל בכדורעף: מחזור N".
+SKIP_SPORT_KEYWORDS = ["כדורעף"]
 
 # Non-game events (draws, lotteries, press conferences) to always skip
 # מסע"ת = מסיבת עיתונאים (pre-game presser show, not a game). Both quote
@@ -565,7 +640,8 @@ TEAM_ALIASES = {
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
-IL_TZ = timezone(timedelta(hours=3))  # Asia/Jerusalem (UTC+3 during summer)
+from zoneinfo import ZoneInfo  # DST-aware Jerusalem (fix 2026-10-16)
+IL_TZ = ZoneInfo("Asia/Jerusalem")  # DST-aware (fix 2026-10-16: was fixed +03:00)
 
 
 def log(msg):
@@ -1249,6 +1325,11 @@ def main():
                 log(f"  Skip (Summer League / B team): {title}")
                 continue
 
+            # Omer's basketball team skips (2026-11-05). Protected teams bypass.
+            if bid == 2 and not has_protected_team(title) and is_skipped_basketball_team(title):
+                log(f"  Skip (basketball team on Omer's skip list): {title}")
+                continue
+
             if is_australian_game(title):
                 log(f"  Skip (Australian league): {title}")
                 continue
@@ -1258,6 +1339,19 @@ def main():
             # they may legitimately face African clubs (world finals).
             if not has_protected_team(title) and is_african_game(title):
                 log(f"  Skip (African game): {title}")
+                continue
+
+            # Korean sports — skip entirely (Omer 2026-10-12). Protected
+            # teams bypass (world finals vs Korean clubs stay).
+            if not has_protected_team(title) and is_korean_game(title):
+                log(f"  Skip (Korean sports): {title}")
+                continue
+
+            # Whole-title sport skip — e.g. Israeli volleyball league round
+            # recaps (Omer 2026-10-12: "skip ליגת העל בכדורעף"). No protected
+            # bypass: no protected team plays volleyball.
+            if has_skip_sport(title):
+                log(f"  Skip (sport keyword): {title}")
                 continue
 
             # Omer's soccer content filters (branch_id == 1 only).
